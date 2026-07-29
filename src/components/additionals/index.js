@@ -1,0 +1,10 @@
+export { default as AdvanceCalendar } from "./advanceCal/AdvanceCalendar";
+export { default as MaintananceAMC } from "./amc/MaintananceAMC";
+export { default as GuestDataTable } from "./guest/GuestDataTable";
+export { default as GuestData } from "./guest/GuestData";
+export { default as AdvanceBooking } from "./advanceBooking/AdvanceBooking";
+export { default as DailyReports } from "./dailyReports/DailyReports";
+export { default as RoomDetails } from "./roomDetails/RoomDetails";
+export { default as Account } from "./account/Account";
+export { default as Staff } from "./staff/Staff";
+export { default as Settings } from "./settings/Settings";
