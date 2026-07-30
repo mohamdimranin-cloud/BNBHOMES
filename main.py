@@ -205,7 +205,12 @@ app = FastAPI(title="BnbHomes API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://bnbhomes-inky.vercel.app",
+        "https://bnbhomes-git-main-waitnots-projects.vercel.app",
+        "https://bnbhomes-ndnlqfhb8-waitnots-projects.vercel.app",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
