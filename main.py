@@ -3,7 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 from typing import List, Optional, Dict, Any, Union
-import mysql.connector
+import psycopg2
+import psycopg2.extras
+import psycopg2.errors
 import os
 import uuid
 import time
@@ -256,40 +258,128 @@ def _create_tables_sync():
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute(
-                "CREATE TABLE IF NOT EXISTS extra_charges ("
-                "    id         INT AUTO_INCREMENT PRIMARY KEY,"
-                "    booking_id INT NOT NULL,"
-                "    amount     DECIMAL(10,2) NOT NULL,"
-                "    reason     VARCHAR(255) NOT NULL,"
-                "    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-                "    FOREIGN KEY (booking_id) REFERENCES bookings(id)"
-                ")"
-            )
-            cursor.execute(
-                "CREATE TABLE IF NOT EXISTS money_entries ("
-                "    id               INT AUTO_INCREMENT PRIMARY KEY,"
-                "    booking_id       INT NOT NULL,"
-                "    amount           DECIMAL(10,2) NOT NULL,"
-                "    payment_method   VARCHAR(50) NOT NULL,"
-                "    reference_number VARCHAR(255),"
-                "    created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,"
-                "    FOREIGN KEY (booking_id) REFERENCES bookings(id)"
-                ")"
-            )
-            cursor.execute(
-                "CREATE TABLE IF NOT EXISTS room_shift_history ("
-                "    id              INT AUTO_INCREMENT PRIMARY KEY,"
-                "    booking_id      INT NOT NULL,"
-                "    old_room_number VARCHAR(20) NOT NULL,"
-                "    new_room_number VARCHAR(20) NOT NULL,"
-                "    reason          TEXT NOT NULL,"
-                "    old_room_status VARCHAR(50) NOT NULL,"
-                "    shift_time      DATETIME DEFAULT CURRENT_TIMESTAMP,"
-                "    duration_hours  DECIMAL(10,2),"
-                "    FOREIGN KEY (booking_id) REFERENCES bookings(id)"
-                ")"
-            )
+            # Core tables (created here if not already present via setup_db.py)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(100) UNIQUE NOT NULL,
+                    password_hash VARCHAR(255) NOT NULL,
+                    role VARCHAR(50) NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS floors (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) UNIQUE NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS rooms (
+                    id SERIAL PRIMARY KEY,
+                    floor_id INT NOT NULL REFERENCES floors(id),
+                    room_number VARCHAR(20) UNIQUE NOT NULL,
+                    room_type VARCHAR(100),
+                    status VARCHAR(50) DEFAULT 'Vacant',
+                    selected BOOLEAN DEFAULT FALSE
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS bookings (
+                    id SERIAL PRIMARY KEY,
+                    check_in_date DATE,
+                    check_out_date DATE,
+                    check_in_time TIMESTAMP,
+                    check_out_time TIMESTAMP,
+                    number_of_days INT,
+                    booking_ref VARCHAR(50),
+                    num_of_rooms INT,
+                    guest_type VARCHAR(100),
+                    corporate_name VARCHAR(255),
+                    breakfast VARCHAR(50),
+                    any_discount_amt DECIMAL(10,2) DEFAULT 0,
+                    any_discount_cmt TEXT,
+                    room_amount DECIMAL(10,2),
+                    gst DECIMAL(10,2),
+                    advance_amount DECIMAL(10,2),
+                    net_payable DECIMAL(10,2),
+                    payment_amount DECIMAL(10,2),
+                    payment_method VARCHAR(100),
+                    balance_amount DECIMAL(10,2)
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS guests (
+                    id SERIAL PRIMARY KEY,
+                    booking_id INT NOT NULL REFERENCES bookings(id),
+                    guest_id VARCHAR(100),
+                    name VARCHAR(255),
+                    mobile_no VARCHAR(20),
+                    whatsapp_no VARCHAR(20),
+                    email_id VARCHAR(255),
+                    id_type VARCHAR(100),
+                    other_id_name VARCHAR(100),
+                    id_no VARCHAR(100),
+                    id_photo_url TEXT,
+                    user_photo_url TEXT,
+                    vehicle_type VARCHAR(100),
+                    vehicle_no VARCHAR(50)
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS selected_rooms (
+                    id SERIAL PRIMARY KEY,
+                    booking_id INT NOT NULL REFERENCES bookings(id),
+                    room_number VARCHAR(20) NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS room_bed_types (
+                    id SERIAL PRIMARY KEY,
+                    booking_id INT NOT NULL REFERENCES bookings(id),
+                    room_number VARCHAR(20),
+                    bed_type VARCHAR(100)
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS guest_occupancy (
+                    id SERIAL PRIMARY KEY,
+                    booking_id INT NOT NULL REFERENCES bookings(id),
+                    room_number VARCHAR(20),
+                    num_of_adults INT DEFAULT 1,
+                    num_of_children INT DEFAULT 0
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS extra_charges (
+                    id SERIAL PRIMARY KEY,
+                    booking_id INT NOT NULL REFERENCES bookings(id),
+                    amount DECIMAL(10,2) NOT NULL,
+                    reason VARCHAR(255) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS money_entries (
+                    id SERIAL PRIMARY KEY,
+                    booking_id INT NOT NULL REFERENCES bookings(id),
+                    amount DECIMAL(10,2) NOT NULL,
+                    payment_method VARCHAR(50) NOT NULL,
+                    reference_number VARCHAR(255),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS room_shift_history (
+                    id SERIAL PRIMARY KEY,
+                    booking_id INT NOT NULL REFERENCES bookings(id),
+                    old_room_number VARCHAR(20) NOT NULL,
+                    new_room_number VARCHAR(20) NOT NULL,
+                    reason TEXT NOT NULL,
+                    old_room_status VARCHAR(50) NOT NULL,
+                    shift_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    duration_hours DECIMAL(10,2)
+                )
+            """)
             conn.commit()
             logging.info("DB tables verified/created successfully.")
         finally:
@@ -301,21 +391,19 @@ def _create_tables_sync():
 # DB config
 # ---------------------------------------------------------------------------
 
-DB_CONFIG = {
-    "user": "BnbUser",
-    "password": "BnbUser@123",
-    "host": "68.178.152.158",
-    "database": "bnbtest",
-}
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://neondb_owner:npg_Yg3cvwMIG6WZ@ep-broad-glade-ayxm7jro-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "pdf"}
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Connection pool — reuses TCP connections instead of opening a new one per request
-# Direct connection — simple and reliable for remote DB
 def get_db_connection():
-    return mysql.connector.connect(connection_timeout=15, **DB_CONFIG)
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    conn.autocommit = False
+    return conn
 
 
 def _date_str(val):
@@ -352,12 +440,12 @@ async def register_user(user: UserCreate):
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)",
+            "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) RETURNING id",
             (user.username, password_hash, user.role),
         )
         conn.commit()
         return {"status": "success", "message": "User registered successfully"}
-    except mysql.connector.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
         raise HTTPException(status_code=409, detail="Username already exists")
     finally:
         conn.close()
@@ -367,7 +455,7 @@ async def register_user(user: UserCreate):
 async def login_user(user: UserBase):
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
+        cursor = conn.cursor()
         cursor.execute("SELECT * FROM users WHERE username = %s", (user.username,))
         db_user = cursor.fetchone()
         if not db_user or not check_password_hash(db_user["password_hash"], user.password):
@@ -390,7 +478,7 @@ async def get_rooms():
     if cached is not None:
         return cached
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     cursor.execute("SELECT * FROM floors")
     floors = cursor.fetchall()
     cursor.execute("SELECT * FROM rooms")
@@ -413,7 +501,7 @@ async def update_rooms_bulk(rooms: Dict[str, List[RoomUpdate]]):
             floor = cursor.fetchone()
             if not floor:
                 continue
-            floor_id = floor[0]
+            floor_id = floor["id"]
             for room in room_list:
                 cursor.execute(
                     "UPDATE rooms SET room_type = %s, status = %s, selected = %s WHERE room_number = %s AND floor_id = %s",
@@ -429,7 +517,7 @@ async def update_rooms_bulk(rooms: Dict[str, List[RoomUpdate]]):
 @app.patch("/rooms/{room_number}")
 async def update_room_status(room_number: str, room: RoomUpdate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM rooms WHERE room_number = %s", (room_number,))
         existing = cursor.fetchone()
@@ -544,7 +632,7 @@ def _fetch_booking_full(cursor, booking_id):
 @app.get("/bookings/guestDetail/{room_number}")
 async def get_guest_detail_by_room(room_number: str):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute(
             "SELECT booking_id FROM selected_rooms WHERE room_number = %s ORDER BY booking_id DESC LIMIT 1",
@@ -564,7 +652,7 @@ async def get_guest_detail_by_room(room_number: str):
 @app.get("/bookings/getCheckout/{room_number}")
 async def get_checkout_data(room_number: str):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute(
             "SELECT booking_id FROM selected_rooms WHERE room_number = %s ORDER BY booking_id DESC LIMIT 1",
@@ -584,7 +672,7 @@ async def get_checkout_data(room_number: str):
 @app.get("/bookings/{booking_id}")
 async def get_booking(booking_id: int):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         data = _fetch_booking_full(cursor, booking_id)
         if not data:
@@ -600,31 +688,31 @@ async def create_booking(booking: BookingCreate):
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO bookings (check_in_date, check_out_date, number_of_days, booking_ref, num_of_rooms, guest_type, corporate_name, breakfast, any_discount_amt, any_discount_cmt, room_amount, gst, advance_amount, net_payable, payment_amount, payment_method, balance_amount) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO bookings (check_in_date, check_out_date, number_of_days, booking_ref, num_of_rooms, guest_type, corporate_name, breakfast, any_discount_amt, any_discount_cmt, room_amount, gst, advance_amount, net_payable, payment_amount, payment_method, balance_amount) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (booking.checkInDate, booking.checkOutDate, booking.numberOfDays, booking.bookingRef,
              booking.numOfRooms, booking.guestType, booking.corporateName, booking.breakfast,
              booking.anyDiscountAmt, booking.anyDiscountCmt, booking.roomAmount, booking.gst,
              booking.advanceAmount, booking.netPayable, booking.paymentAmount, booking.paymentMethod,
              booking.balanceAmnt),
         )
-        booking_id = cursor.lastrowid
+        booking_id = cursor.fetchone()["id"]
         for guest in booking.guestDetails:
             cursor.execute(
-                "INSERT INTO guests (booking_id, guest_id, name, mobile_no, whatsapp_no, email_id, id_type, other_id_name, id_no, id_photo_url, user_photo_url, vehicle_type, vehicle_no) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO guests (booking_id, guest_id, name, mobile_no, whatsapp_no, email_id, id_type, other_id_name, id_no, id_photo_url, user_photo_url, vehicle_type, vehicle_no) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                 (booking_id, guest.id, guest.name, guest.mobileNo, guest.whatsappNo, guest.emailID,
                  guest.idType, guest.otherIdName, guest.idNo, guest.idPhotoUrl, guest.userPhotoUrl,
                  guest.vehicleType, guest.vehicleNo),
             )
         for room in booking.selectedRooms:
-            cursor.execute("INSERT INTO selected_rooms (booking_id, room_number) VALUES (%s,%s)", (booking_id, room))
+            cursor.execute("INSERT INTO selected_rooms (booking_id, room_number) VALUES (%s,%s) RETURNING id", (booking_id, room))
         for bed in booking.roomBedType:
             cursor.execute(
-                "INSERT INTO room_bed_types (booking_id, room_number, bed_type) VALUES (%s,%s,%s)",
+                "INSERT INTO room_bed_types (booking_id, room_number, bed_type) VALUES (%s,%s,%s) RETURNING id",
                 (booking_id, bed.get("roomNum", bed.get("room_number", "")), bed.get("bedType", bed.get("bed_type", ""))),
             )
         for occ in booking.guestOccupancy:
             cursor.execute(
-                "INSERT INTO guest_occupancy (booking_id, room_number, num_of_adults, num_of_children) VALUES (%s,%s,%s,%s)",
+                "INSERT INTO guest_occupancy (booking_id, room_number, num_of_adults, num_of_children) VALUES (%s,%s,%s,%s) RETURNING id",
                 (
                     booking_id,
                     occ.get("roomNum", occ.get("room_number", "")),
@@ -648,7 +736,7 @@ async def create_booking(booking: BookingCreate):
 @app.patch("/bookings/stayback/{room_number}")
 async def update_to_stayback(room_number: str):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         # Only update if currently Just Occupied and checkout date is in future
         cursor.execute("SELECT * FROM rooms WHERE room_number = %s", (room_number,))
@@ -679,7 +767,7 @@ async def update_to_stayback(room_number: str):
 @app.patch("/bookings/overstay/{room_number}")
 async def update_to_overstay(room_number: str):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM rooms WHERE room_number = %s", (room_number,))
         room = cursor.fetchone()
@@ -706,7 +794,7 @@ async def update_to_overstay(room_number: str):
 @app.patch("/bookings/doCheckout/{booking_id}")
 async def do_checkout(booking_id: int):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM bookings WHERE id = %s", (booking_id,))
         booking = cursor.fetchone()
@@ -733,7 +821,7 @@ async def do_checkout(booking_id: int):
 @app.get("/bookings/guestData/{booking_id}")
 async def get_guest_data_by_booking(booking_id: int):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         data = _fetch_booking_full(cursor, booking_id)
         if not data:
@@ -749,10 +837,10 @@ async def get_all_booking_data():
     if cached is not None:
         return cached
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute(
-            "SELECT b.id, g.name AS guest_name, g.email_id, b.check_in_date, b.check_out_date, b.guest_type AS booking_status, b.booking_ref, b.num_of_rooms, b.room_amount, b.balance_amount FROM bookings b LEFT JOIN guests g ON b.id = g.booking_id GROUP BY b.id ORDER BY b.id DESC"
+            """SELECT DISTINCT ON (b.id) b.id, g.name AS guest_name, g.email_id, b.check_in_date, b.check_out_date, b.guest_type AS booking_status, b.booking_ref, b.num_of_rooms, b.room_amount, b.balance_amount FROM bookings b LEFT JOIN guests g ON b.id = g.booking_id ORDER BY b.id DESC"""
         )
         rows = cursor.fetchall()
         result = []
@@ -771,10 +859,10 @@ async def get_all_booking_data():
 @app.get("/all/calendarData")
 async def get_calendar_data():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute(
-            "SELECT b.id, b.check_in_date, b.check_out_date, b.number_of_days, b.booking_ref, b.guest_type, b.num_of_rooms, g.name AS guest_name, g.mobile_no, sr.room_number FROM bookings b LEFT JOIN guests g ON b.id = g.booking_id LEFT JOIN selected_rooms sr ON b.id = sr.booking_id GROUP BY b.id ORDER BY b.check_in_date DESC"
+            """SELECT DISTINCT ON (b.id) b.id, b.check_in_date, b.check_out_date, b.number_of_days, b.booking_ref, b.guest_type, b.num_of_rooms, g.name AS guest_name, g.mobile_no, sr.room_number FROM bookings b LEFT JOIN guests g ON b.id = g.booking_id LEFT JOIN selected_rooms sr ON b.id = sr.booking_id ORDER BY b.id DESC"""
         )
         rows = cursor.fetchall()
         result = []
@@ -794,11 +882,11 @@ async def get_calendar_data():
 async def lookup_booking_ref(ref: str):
     """Search both advance_bookings and bookings tables for a reference, return guest details."""
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         # 1. Try advance_bookings first
-        cursor.execute("SHOW TABLES LIKE 'advance_bookings'")
-        if cursor.fetchone():
+        cursor.execute("SELECT to_regclass('public.advance_bookings') IS NOT NULL AS tbl_exists")
+        if cursor.fetchone()["tbl_exists"]:
             cursor.execute("SELECT * FROM advance_bookings WHERE booking_ref = %s", (ref,))
             row = cursor.fetchone()
             if row:
@@ -852,7 +940,7 @@ async def lookup_booking_ref(ref: str):
 @app.get("/latest/checkinBooking")
 async def get_latest_checkin_booking_ref():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         from datetime import datetime
         year = str(datetime.now().year)[-2:]
@@ -874,10 +962,11 @@ async def get_latest_checkin_booking_ref():
 @app.get("/latest/advanceBooking")
 async def get_latest_advance_booking_ref():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
-        cursor.execute("SHOW TABLES LIKE 'advance_bookings'")
-        if not cursor.fetchone():
+        cursor.execute("SELECT to_regclass('public.advance_bookings') IS NOT NULL AS tbl_exists")
+        row = cursor.fetchone()
+        if not row or not row["tbl_exists"]:
             return {"nextRef": "AD001/25"}
         from datetime import datetime
         year = str(datetime.now().year)[-2:]
@@ -901,11 +990,23 @@ async def create_advance_booking(booking: AdvanceBookingCreate):
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "CREATE TABLE IF NOT EXISTS advance_bookings (id INT AUTO_INCREMENT PRIMARY KEY, guest_name VARCHAR(255), guest_mobile VARCHAR(20), guest_whatsapp VARCHAR(20), guest_email VARCHAR(255), guest_type VARCHAR(50), corporate_name VARCHAR(255), check_in_date DATE, check_out_date DATE, number_of_nights INT, room_type VARCHAR(100), number_of_rooms INT, rate_per_room DECIMAL(10,2), total_amount DECIMAL(10,2), discount_amt DECIMAL(10,2) DEFAULT 0, final_amount DECIMAL(10,2), advance_amount DECIMAL(10,2), paid_via VARCHAR(100), paid_reference VARCHAR(255), balance_amount DECIMAL(10,2), remarks TEXT, booking_ref VARCHAR(50), previous_ref VARCHAR(50), status VARCHAR(50) DEFAULT 'Active', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+            """CREATE TABLE IF NOT EXISTS advance_bookings (
+            id SERIAL PRIMARY KEY,
+            guest_name VARCHAR(255), guest_mobile VARCHAR(20), guest_whatsapp VARCHAR(20),
+            guest_email VARCHAR(255), guest_type VARCHAR(50), corporate_name VARCHAR(255),
+            check_in_date DATE, check_out_date DATE, number_of_nights INT,
+            room_type VARCHAR(100), number_of_rooms INT, rate_per_room DECIMAL(10,2),
+            total_amount DECIMAL(10,2), discount_amt DECIMAL(10,2) DEFAULT 0,
+            final_amount DECIMAL(10,2), advance_amount DECIMAL(10,2),
+            paid_via VARCHAR(100), paid_reference VARCHAR(255), balance_amount DECIMAL(10,2),
+            remarks TEXT, booking_ref VARCHAR(50), previous_ref VARCHAR(50),
+            status VARCHAR(50) DEFAULT 'Active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )"""
         )
         conn.commit()
         cursor.execute(
-            "INSERT INTO advance_bookings (guest_name, guest_mobile, guest_whatsapp, guest_email, guest_type, corporate_name, check_in_date, check_out_date, number_of_nights, room_type, number_of_rooms, rate_per_room, total_amount, discount_amt, final_amount, advance_amount, paid_via, paid_reference, balance_amount, remarks, booking_ref, previous_ref) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO advance_bookings (guest_name, guest_mobile, guest_whatsapp, guest_email, guest_type, corporate_name, check_in_date, check_out_date, number_of_nights, room_type, number_of_rooms, rate_per_room, total_amount, discount_amt, final_amount, advance_amount, paid_via, paid_reference, balance_amount, remarks, booking_ref, previous_ref) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id" RETURNING id,
             (booking.guestName, booking.guestMobile, booking.guestWhatsapp, booking.guestEmail,
              booking.guestType, booking.corporateName, booking.checkInDate, booking.checkOutDate,
              booking.numberOfNights, booking.roomType, booking.numberOfRooms, booking.ratePerRoom,
@@ -914,7 +1015,7 @@ async def create_advance_booking(booking: AdvanceBookingCreate):
              booking.bookingRef, booking.previousRef),
         )
         conn.commit()
-        return {"status": "success", "id": cursor.lastrowid, "bookingRef": booking.bookingRef}
+        return {"status": "success", "id": cursor.fetchone()["id"], "bookingRef": booking.bookingRef}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -925,10 +1026,11 @@ async def create_advance_booking(booking: AdvanceBookingCreate):
 @app.get("/advanceBooking/{booking_id}")
 async def get_advance_booking_by_id(booking_id: int):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
-        cursor.execute("SHOW TABLES LIKE 'advance_bookings'")
-        if not cursor.fetchone():
+        cursor.execute("SELECT to_regclass('public.advance_bookings') IS NOT NULL AS tbl_exists")
+        row = cursor.fetchone()
+        if not row or not row["tbl_exists"]:
             raise HTTPException(status_code=404, detail="No advance bookings found")
         cursor.execute("SELECT * FROM advance_bookings WHERE id = %s", (booking_id,))
         row = cursor.fetchone()
@@ -949,8 +1051,9 @@ async def update_advance_booking(booking_id: int, booking: AdvanceBookingCreate)
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SHOW TABLES LIKE 'advance_bookings'")
-        if not cursor.fetchone():
+        cursor.execute("SELECT to_regclass('public.advance_bookings') IS NOT NULL AS tbl_exists")
+        row = cursor.fetchone()
+        if not row or not row["tbl_exists"]:
             raise HTTPException(status_code=404, detail="No advance bookings found")
         cursor.execute("SELECT id FROM advance_bookings WHERE id = %s", (booking_id,))
         if not cursor.fetchone():
@@ -976,10 +1079,11 @@ async def update_advance_booking(booking_id: int, booking: AdvanceBookingCreate)
 @app.get("/get/advanceBooking")
 async def get_advance_booking_by_ref(advance_booking_ref: str):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
-        cursor.execute("SHOW TABLES LIKE 'advance_bookings'")
-        if not cursor.fetchone():
+        cursor.execute("SELECT to_regclass('public.advance_bookings') IS NOT NULL AS tbl_exists")
+        row = cursor.fetchone()
+        if not row or not row["tbl_exists"]:
             raise HTTPException(status_code=404, detail="No advance bookings found")
         cursor.execute("SELECT * FROM advance_bookings WHERE booking_ref = %s", (advance_booking_ref,))
         row = cursor.fetchone()
@@ -998,10 +1102,11 @@ async def get_advance_booking_by_ref(advance_booking_ref: str):
 @app.get("/all/advanceBookings")
 async def get_all_advance_bookings():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
-        cursor.execute("SHOW TABLES LIKE 'advance_bookings'")
-        if not cursor.fetchone():
+        cursor.execute("SELECT to_regclass('public.advance_bookings') IS NOT NULL AS tbl_exists")
+        row = cursor.fetchone()
+        if not row or not row["tbl_exists"]:
             return []
         cursor.execute("SELECT * FROM advance_bookings ORDER BY id DESC")
         rows = cursor.fetchall()
@@ -1021,10 +1126,11 @@ async def get_all_advance_bookings():
 @app.get("/advanceCalendar")
 async def get_advance_calendar():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
-        cursor.execute("SHOW TABLES LIKE 'advance_bookings'")
-        if not cursor.fetchone():
+        cursor.execute("SELECT to_regclass('public.advance_bookings') IS NOT NULL AS tbl_exists")
+        row = cursor.fetchone()
+        if not row or not row["tbl_exists"]:
             return []
         cursor.execute(
             "SELECT id, booking_ref, guest_name, guest_mobile, guest_type, check_in_date, check_out_date, number_of_nights, room_type, number_of_rooms, final_amount, advance_amount, balance_amount, status, remarks FROM advance_bookings ORDER BY check_in_date ASC"
@@ -1045,7 +1151,7 @@ async def get_advance_calendar():
 @app.get("/bookings/guest/{guest_id}")
 async def get_bookings_by_guest_id(guest_id: str):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute(
             "SELECT DISTINCT b.id FROM bookings b JOIN guests g ON b.id = g.booking_id WHERE g.guest_id = %s",
@@ -1071,17 +1177,17 @@ async def get_bookings_by_guest_id(guest_id: str):
 @app.post("/bookings/{bookingId}/extraCharges")
 async def add_extra_charge(bookingId: int, charge: ExtraChargeCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("SELECT id FROM bookings WHERE id = %s", (bookingId,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Booking not found")
         cursor.execute(
-            "INSERT INTO extra_charges (booking_id, amount, reason) VALUES (%s, %s, %s)",
+            "INSERT INTO extra_charges (booking_id, amount, reason) VALUES (%s, %s, %s) RETURNING id",
             (bookingId, charge.amount, charge.reason)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "booking_id": bookingId, "amount": charge.amount, "reason": charge.reason}
+        return {"id": cursor.fetchone()["id"], "booking_id": bookingId, "amount": charge.amount, "reason": charge.reason}
     except HTTPException:
         raise
     except Exception as e:
@@ -1093,7 +1199,7 @@ async def add_extra_charge(bookingId: int, charge: ExtraChargeCreate):
 @app.get("/bookings/{bookingId}/extraCharges")
 async def get_extra_charges(bookingId: int):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("SELECT id FROM bookings WHERE id = %s", (bookingId,))
         if not cursor.fetchone():
@@ -1115,17 +1221,17 @@ async def get_extra_charges(bookingId: int):
 @app.post("/bookings/{bookingId}/moneyEntries")
 async def add_money_entry(bookingId: int, entry: MoneyEntryCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("SELECT id FROM bookings WHERE id = %s", (bookingId,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Booking not found")
         cursor.execute(
-            "INSERT INTO money_entries (booking_id, amount, payment_method, reference_number) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO money_entries (booking_id, amount, payment_method, reference_number) VALUES (%s, %s, %s, %s) RETURNING id",
             (bookingId, entry.amount, entry.payment_method, entry.reference_number)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "booking_id": bookingId, "amount": entry.amount,
+        return {"id": cursor.fetchone()["id"], "booking_id": bookingId, "amount": entry.amount,
                 "payment_method": entry.payment_method, "reference_number": entry.reference_number}
     except HTTPException:
         raise
@@ -1138,7 +1244,7 @@ async def add_money_entry(bookingId: int, entry: MoneyEntryCreate):
 @app.get("/bookings/{bookingId}/moneyEntries")
 async def get_money_entries(bookingId: int):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("SELECT id FROM bookings WHERE id = %s", (bookingId,))
         if not cursor.fetchone():
@@ -1159,7 +1265,7 @@ async def get_money_entries(bookingId: int):
 @app.patch("/bookings/{bookingId}/extend")
 async def extend_booking(bookingId: int, body: ExtendBooking):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("SELECT id, check_in_date FROM bookings WHERE id = %s", (bookingId,))
         booking = cursor.fetchone()
@@ -1191,7 +1297,7 @@ async def extend_booking(bookingId: int, body: ExtendBooking):
 @app.post("/bookings/{bookingId}/roomShift")
 async def room_shift(bookingId: int, body: RoomShiftCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         # Validate booking exists and get check_in_time
         cursor.execute("SELECT id, check_in_time FROM bookings WHERE id = %s", (bookingId,))
@@ -1258,7 +1364,7 @@ async def room_shift(bookingId: int, body: RoomShiftCreate):
 @app.post("/bookings/{bookingId}/addGuest")
 async def add_guest(bookingId: int, body: AddGuestCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         # Validate booking exists
         cursor.execute("SELECT id FROM bookings WHERE id = %s", (bookingId,))
@@ -1281,7 +1387,7 @@ async def add_guest(bookingId: int, body: AddGuestCreate):
             ),
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "booking_id": bookingId}
+        return {"id": cursor.fetchone()["id"], "booking_id": bookingId}
     except HTTPException:
         raise
     except Exception as e:
@@ -1296,39 +1402,39 @@ async def add_guest(bookingId: int, body: AddGuestCreate):
 
 def _ensure_account_tables(cursor, conn):
     cursor.execute("""CREATE TABLE IF NOT EXISTS expense_entries (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id SERIAL PRIMARY KEY,
         category VARCHAR(100) NOT NULL,
         amount DECIMAL(10,2) NOT NULL,
         reference_number VARCHAR(255),
         attachment_url VARCHAR(500),
         notes TEXT,
         entry_date DATE NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS account_balances (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id SERIAL PRIMARY KEY,
         bank_name VARCHAR(100) NOT NULL,
         entry_date DATE NOT NULL,
         amount DECIMAL(10,2) NOT NULL,
         notes TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS credit_card_entries (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id SERIAL PRIMARY KEY,
         card_name VARCHAR(100) NOT NULL,
         entry_date DATE NOT NULL,
         amount DECIMAL(10,2) NOT NULL,
         notes TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS guest_return_entries (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id SERIAL PRIMARY KEY,
         return_type VARCHAR(50) NOT NULL,
         booking_id INT,
         return_date DATE NOT NULL,
         amount DECIMAL(10,2) NOT NULL,
         reason TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
     conn.commit()
 
@@ -1340,16 +1446,16 @@ def _ensure_account_tables(cursor, conn):
 async def add_expense(entry: ExpenseEntryCreate):
     from datetime import date as dt_date
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_account_tables(cursor, conn)
         entry_date = entry.entry_date or str(dt_date.today())
         cursor.execute(
-            "INSERT INTO expense_entries (category, amount, reference_number, attachment_url, notes, entry_date) VALUES (%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO expense_entries (category, amount, reference_number, attachment_url, notes, entry_date) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
             (entry.category, entry.amount, entry.reference_number, entry.attachment_url, entry.notes, entry_date)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "status": "success"}
+        return {"id": cursor.fetchone()["id"], "status": "success"}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -1359,7 +1465,7 @@ async def add_expense(entry: ExpenseEntryCreate):
 @app.get("/account/expenses")
 async def get_expenses(start_date: Optional[str] = None, end_date: Optional[str] = None):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_account_tables(cursor, conn)
         if start_date and end_date:
@@ -1393,7 +1499,7 @@ async def delete_expense(expense_id: int):
 @app.get("/account/pendingPayments")
 async def get_pending_payments():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("""
             SELECT b.id, b.booking_ref, b.check_in_date, b.check_out_date,
@@ -1403,10 +1509,10 @@ async def get_pending_payments():
                    COALESCE((SELECT SUM(me.amount) FROM money_entries me WHERE me.booking_id = b.id), 0) AS total_paid
             FROM bookings b
             LEFT JOIN guests g ON b.id = g.booking_id
-            GROUP BY b.id
-            HAVING (CAST(b.net_payable AS DECIMAL) + COALESCE((SELECT SUM(ec2.amount) FROM extra_charges ec2 WHERE ec2.booking_id = b.id),0)
+            GROUP BY b.id, b.booking_ref, b.check_in_date, b.check_out_date, b.net_payable, b.advance_amount, b.balance_amount, g.name, g.mobile_no
+            HAVING (CAST(b.net_payable AS DECIMAL(10,2)) + COALESCE((SELECT SUM(ec2.amount) FROM extra_charges ec2 WHERE ec2.booking_id = b.id),0)
                     - COALESCE((SELECT SUM(me2.amount) FROM money_entries me2 WHERE me2.booking_id = b.id),0)
-                    - CAST(b.advance_amount AS DECIMAL)) > 0
+                    - CAST(b.advance_amount AS DECIMAL(10,2))) > 0
             ORDER BY b.check_in_date DESC
         """)
         rows = cursor.fetchall()
@@ -1426,15 +1532,15 @@ async def get_pending_payments():
 @app.post("/account/balances")
 async def add_balance(entry: AccountBalanceCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_account_tables(cursor, conn)
         cursor.execute(
-            "INSERT INTO account_balances (bank_name, entry_date, amount, notes) VALUES (%s,%s,%s,%s)",
+            "INSERT INTO account_balances (bank_name, entry_date, amount, notes) VALUES (%s,%s,%s,%s) RETURNING id",
             (entry.bank_name, entry.entry_date, entry.amount, entry.notes)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "status": "success"}
+        return {"id": cursor.fetchone()["id"], "status": "success"}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -1444,7 +1550,7 @@ async def add_balance(entry: AccountBalanceCreate):
 @app.get("/account/balances")
 async def get_balances(bank_name: Optional[str] = None):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_account_tables(cursor, conn)
         if bank_name:
@@ -1467,15 +1573,15 @@ async def get_balances(bank_name: Optional[str] = None):
 @app.post("/account/creditCards")
 async def add_credit_card(entry: CreditCardCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_account_tables(cursor, conn)
         cursor.execute(
-            "INSERT INTO credit_card_entries (card_name, entry_date, amount, notes) VALUES (%s,%s,%s,%s)",
+            "INSERT INTO credit_card_entries (card_name, entry_date, amount, notes) VALUES (%s,%s,%s,%s) RETURNING id",
             (entry.card_name, entry.entry_date, entry.amount, entry.notes)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "status": "success"}
+        return {"id": cursor.fetchone()["id"], "status": "success"}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -1485,7 +1591,7 @@ async def add_credit_card(entry: CreditCardCreate):
 @app.get("/account/creditCards")
 async def get_credit_cards():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_account_tables(cursor, conn)
         cursor.execute("SELECT * FROM credit_card_entries ORDER BY entry_date DESC")
@@ -1505,15 +1611,15 @@ async def get_credit_cards():
 @app.post("/account/guestReturns")
 async def add_guest_return(entry: GuestReturnCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_account_tables(cursor, conn)
         cursor.execute(
-            "INSERT INTO guest_return_entries (return_type, booking_id, return_date, amount, reason) VALUES (%s,%s,%s,%s,%s)",
+            "INSERT INTO guest_return_entries (return_type, booking_id, return_date, amount, reason) VALUES (%s,%s,%s,%s,%s) RETURNING id",
             (entry.return_type, entry.booking_id, entry.return_date, entry.amount, entry.reason)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "status": "success"}
+        return {"id": cursor.fetchone()["id"], "status": "success"}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -1523,7 +1629,7 @@ async def add_guest_return(entry: GuestReturnCreate):
 @app.get("/account/guestReturns")
 async def get_guest_returns():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_account_tables(cursor, conn)
         cursor.execute("SELECT * FROM guest_return_entries ORDER BY return_date DESC")
@@ -1543,7 +1649,7 @@ async def get_guest_returns():
 @app.get("/account/transactionReport")
 async def get_transaction_report(start_date: str, end_date: str):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_account_tables(cursor, conn)
         report = {}
@@ -1554,8 +1660,8 @@ async def get_transaction_report(start_date: str, end_date: str):
                    b.booking_ref, g.name AS guest_name
             FROM money_entries me
             LEFT JOIN bookings b ON me.booking_id = b.id
-            LEFT JOIN guests g ON b.id = g.booking_id
-            WHERE DATE(me.created_at) BETWEEN %s AND %s
+            LEFT JOIN guests g ON b.id = g.booking_id AND g.id = (SELECT MIN(id) FROM guests WHERE booking_id = b.id)
+            WHERE me.created_at::date BETWEEN %s AND %s
             ORDER BY me.created_at DESC
         """, (start_date, end_date))
         money_entries = cursor.fetchall()
@@ -1662,7 +1768,7 @@ class CleanerSalaryCreate(BaseModel):
 
 def _ensure_staff_tables(cursor, conn):
     cursor.execute("""CREATE TABLE IF NOT EXISTS staff (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         role VARCHAR(100) NOT NULL,
         mobile VARCHAR(20) NOT NULL,
@@ -1673,20 +1779,20 @@ def _ensure_staff_tables(cursor, conn):
         bank_account VARCHAR(100),
         id_proof VARCHAR(500),
         staff_type VARCHAR(20) DEFAULT 'staff',
-        is_active TINYINT DEFAULT 1,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        is_active SMALLINT DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS duty_schedules (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id SERIAL PRIMARY KEY,
         staff_id INT NOT NULL,
         schedule_date DATE NOT NULL,
         shift VARCHAR(20) NOT NULL,
         notes TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (staff_id) REFERENCES staff(id)
     )""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS staff_salaries (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id SERIAL PRIMARY KEY,
         staff_id INT NOT NULL,
         month VARCHAR(7) NOT NULL,
         basic_salary DECIMAL(10,2) NOT NULL,
@@ -1696,18 +1802,18 @@ def _ensure_staff_tables(cursor, conn):
         paid_date DATE,
         paid_via VARCHAR(50),
         notes TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (staff_id) REFERENCES staff(id)
     )""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS cleaner_salaries (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id SERIAL PRIMARY KEY,
         staff_id INT NOT NULL,
         week_start DATE NOT NULL,
         week_end DATE NOT NULL,
         amount DECIMAL(10,2) NOT NULL,
         paid_date DATE,
         notes TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (staff_id) REFERENCES staff(id)
     )""")
     conn.commit()
@@ -1719,15 +1825,15 @@ def _ensure_staff_tables(cursor, conn):
 @app.post("/staff")
 async def add_staff(s: StaffCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_staff_tables(cursor, conn)
         cursor.execute(
-            "INSERT INTO staff (name, role, mobile, email, address, join_date, salary, bank_account, id_proof, staff_type) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO staff (name, role, mobile, email, address, join_date, salary, bank_account, id_proof, staff_type) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (s.name, s.role, s.mobile, s.email, s.address, s.join_date, s.salary, s.bank_account, s.id_proof, s.staff_type)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "status": "success"}
+        return {"id": cursor.fetchone()["id"], "status": "success"}
     except Exception as e:
         conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -1736,7 +1842,7 @@ async def add_staff(s: StaffCreate):
 @app.get("/staff")
 async def get_all_staff(staff_type: Optional[str] = None):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_staff_tables(cursor, conn)
         if staff_type:
@@ -1786,15 +1892,15 @@ async def delete_staff(staff_id: int):
 @app.post("/staff/duty")
 async def add_duty(d: DutyScheduleCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_staff_tables(cursor, conn)
         cursor.execute(
-            "INSERT INTO duty_schedules (staff_id, schedule_date, shift, notes) VALUES (%s,%s,%s,%s)",
+            "INSERT INTO duty_schedules (staff_id, schedule_date, shift, notes) VALUES (%s,%s,%s,%s) RETURNING id",
             (d.staff_id, d.schedule_date, d.shift, d.notes)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "status": "success"}
+        return {"id": cursor.fetchone()["id"], "status": "success"}
     except Exception as e:
         conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -1803,13 +1909,13 @@ async def add_duty(d: DutyScheduleCreate):
 @app.get("/staff/duty")
 async def get_duties(month: Optional[str] = None, staff_id: Optional[int] = None):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_staff_tables(cursor, conn)
         q = "SELECT ds.*, s.name AS staff_name, s.role FROM duty_schedules ds JOIN staff s ON ds.staff_id = s.id WHERE 1=1"
         params = []
         if month:
-            q += " AND DATE_FORMAT(ds.schedule_date, '%Y-%m') = %s"; params.append(month)
+            q += " AND TO_CHAR(, 'YYYY-MM') = %s"; params.append(month)
         if staff_id:
             q += " AND ds.staff_id = %s"; params.append(staff_id)
         q += " ORDER BY ds.schedule_date, s.name"
@@ -1828,16 +1934,16 @@ async def get_duties(month: Optional[str] = None, staff_id: Optional[int] = None
 @app.post("/staff/salary")
 async def add_salary(sal: SalaryCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_staff_tables(cursor, conn)
         net = sal.net_salary if sal.net_salary is not None else (sal.basic_salary + (sal.bonus or 0) - (sal.deductions or 0))
         cursor.execute(
-            "INSERT INTO staff_salaries (staff_id, month, basic_salary, bonus, deductions, net_salary, paid_date, paid_via, notes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO staff_salaries (staff_id, month, basic_salary, bonus, deductions, net_salary, paid_date, paid_via, notes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (sal.staff_id, sal.month, sal.basic_salary, sal.bonus or 0, sal.deductions or 0, net, sal.paid_date, sal.paid_via, sal.notes)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "status": "success"}
+        return {"id": cursor.fetchone()["id"], "status": "success"}
     except Exception as e:
         conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -1846,7 +1952,7 @@ async def add_salary(sal: SalaryCreate):
 @app.get("/staff/salary")
 async def get_salaries(month: Optional[str] = None, staff_id: Optional[int] = None):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_staff_tables(cursor, conn)
         q = "SELECT ss.*, s.name AS staff_name, s.role FROM staff_salaries ss JOIN staff s ON ss.staff_id = s.id WHERE 1=1"
@@ -1871,7 +1977,7 @@ async def payslip_alert():
     """Return months (last 3) where any active staff member has no salary record."""
     from datetime import datetime, date
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_staff_tables(cursor, conn)
         cursor.execute("SELECT id, name FROM staff WHERE is_active = 1 AND staff_type = 'staff'")
@@ -1901,15 +2007,15 @@ async def payslip_alert():
 @app.post("/staff/cleanerSalary")
 async def add_cleaner_salary(cs: CleanerSalaryCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_staff_tables(cursor, conn)
         cursor.execute(
-            "INSERT INTO cleaner_salaries (staff_id, week_start, week_end, amount, paid_date, notes) VALUES (%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO cleaner_salaries (staff_id, week_start, week_end, amount, paid_date, notes) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
             (cs.staff_id, cs.week_start, cs.week_end, cs.amount, cs.paid_date, cs.notes)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "status": "success"}
+        return {"id": cursor.fetchone()["id"], "status": "success"}
     except Exception as e:
         conn.rollback(); raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -1918,7 +2024,7 @@ async def add_cleaner_salary(cs: CleanerSalaryCreate):
 @app.get("/staff/cleanerSalary")
 async def get_cleaner_salaries():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_staff_tables(cursor, conn)
         cursor.execute("SELECT cs.*, s.name AS staff_name FROM cleaner_salaries cs JOIN staff s ON cs.staff_id = s.id ORDER BY cs.week_start DESC")
@@ -1944,19 +2050,19 @@ class SettingItemCreate(BaseModel):
 
 def _ensure_settings_tables(cursor, conn):
     cursor.execute("""CREATE TABLE IF NOT EXISTS settings_items (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id SERIAL PRIMARY KEY,
         category VARCHAR(50) NOT NULL,
         value VARCHAR(255) NOT NULL,
         label VARCHAR(255),
-        is_active TINYINT DEFAULT 1,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        is_active SMALLINT DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
     conn.commit()
 
 @app.get("/settings/{category}")
 async def get_settings(category: str):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_settings_tables(cursor, conn)
         cursor.execute("SELECT * FROM settings_items WHERE category = %s AND is_active = 1 ORDER BY value", (category,))
@@ -1970,15 +2076,15 @@ async def get_settings(category: str):
 @app.post("/settings")
 async def add_setting(item: SettingItemCreate):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         _ensure_settings_tables(cursor, conn)
         cursor.execute(
-            "INSERT INTO settings_items (category, value, label) VALUES (%s,%s,%s)",
+            "INSERT INTO settings_items (category, value, label) VALUES (%s,%s,%s) RETURNING id",
             (item.category, item.value, item.label or item.value)
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "status": "success"}
+        return {"id": cursor.fetchone()["id"], "status": "success"}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -2004,7 +2110,7 @@ async def delete_setting(item_id: int):
 @app.get("/users")
 async def get_users():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("SELECT id, username, role FROM users ORDER BY role, username")
         return cursor.fetchall()
@@ -2034,7 +2140,7 @@ async def delete_user(user_id: int):
 async def get_dashboard_data():
     """Returns rooms, booking counts in a single DB round trip."""
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM floors")
         floors = cursor.fetchall()
