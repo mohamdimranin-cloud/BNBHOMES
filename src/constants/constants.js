@@ -1,13 +1,13 @@
 export const roomStatusBg = (roomStatus, roomNum) => {
   switch (roomStatus) {
-    case "Early Check-in": return <span className="bg-blue-500 px-7 py-3 rounded text-white">{roomNum}</span>;
-    case "Stay Back": return <span className="bg-gray-500 px-7 py-3 rounded text-white">{roomNum}</span>;
-    case "Just Occupied": return <span className="bg-yellow-500 px-7 py-3 rounded text-white">{roomNum}</span>;
-    case "Over Stay": return <span className="bg-red-500 px-7 py-3 rounded text-white">{roomNum}</span>;
-    case "Maintenance": return <span className="bg-orange-500 px-7 py-3 rounded text-white">{roomNum}</span>;
-    case "Cleaning Process": return <span className="bg-teal-500 px-7 py-3 rounded text-white">{roomNum}</span>;
-    case "Vacant": return <span className="bg-green-500 px-7 py-3 rounded text-white">{roomNum}</span>;
-    case "Less Paid": return <span className="bg-purple-500 px-7 py-3 rounded text-white">{roomNum}</span>;
+    case "Early Check-in": return <span className="bg-blue-500 px-5 py-2 rounded text-white text-sm font-medium">{roomNum}</span>;
+    case "Stay Back": return <span className="bg-gray-500 px-5 py-2 rounded text-white text-sm font-medium">{roomNum}</span>;
+    case "Just Occupied": return <span className="bg-yellow-500 px-5 py-2 rounded text-white text-sm font-medium">{roomNum}</span>;
+    case "Over Stay": return <span className="bg-red-500 px-5 py-2 rounded text-white text-sm font-medium">{roomNum}</span>;
+    case "Maintenance": return <span className="bg-orange-500 px-5 py-2 rounded text-white text-sm font-medium">{roomNum}</span>;
+    case "Cleaning Process": return <span className="bg-teal-500 px-5 py-2 rounded text-white text-sm font-medium">{roomNum}</span>;
+    case "Vacant": return <span className="bg-green-500 px-5 py-2 rounded text-white text-sm font-medium">{roomNum}</span>;
+    case "Less Paid": return <span className="bg-purple-500 px-5 py-2 rounded text-white text-sm font-medium">{roomNum}</span>;
     default: return "";
   }
 };

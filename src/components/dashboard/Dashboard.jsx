@@ -288,25 +288,24 @@ const Dashboard = () => {
           </div>
         </Card>
 
-        <Card className='flex items-center justify-center'>
+        <Card className='flex items-center justify-center overflow-hidden'>
           {
             roomData ? (
-              <div className='px-10 py-6 flex items-center justify-start gap-10'>
-                <div className='flex flex-col-reverse gap-3'>
+              <div className='w-full px-4 py-4'>
+                <div className='flex flex-col-reverse gap-2'>
                   {
                     Object.keys(roomData).map((floor, idx) => (
-                      <div className='flex items-center border px-4 py-2 rounded-md w-full h-20' key={idx}>
-                        <Typography className='w-36 text-primary' fontSize={18} fontWeight={500}>{flooreNames[idx]}</Typography>
-                        <div className='flex items-center justify-center gap-6'>
+                      <div className='flex items-center border px-3 py-2 rounded-md w-full min-h-[5rem]' key={idx}>
+                        <Typography className='w-28 min-w-[7rem] text-primary shrink-0' fontSize={15} fontWeight={500}>{flooreNames[idx]}</Typography>
+                        <div className='flex items-center flex-wrap gap-x-4 gap-y-2'>
                           {
                             roomData[floor]?.map((room, idx1) => (
                               <div key={idx1}>
                                 <div className='flex flex-col items-center justify-center cursor-pointer' onClick={(e) => handleMenuOpen(e, room)}>
                                   <Tooltip title={room?.status} arrow>
-                                    {/* <span className={`${roomStatusBg(room?.status)} px-7 py-3 rounded text-white`}>{room?.room_number}</span> */}
                                     {roomStatusBg(room?.status, room?.room_number)}
                                   </Tooltip>
-                                  <span className='text-[16px] text-primary'>{room?.room_type}</span>
+                                  <span className='text-[13px] text-primary text-center'>{room?.room_type}</span>
                                 </div>
                               </div>
                             ))
