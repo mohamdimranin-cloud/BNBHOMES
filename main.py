@@ -453,12 +453,18 @@ async def register_user(user: UserCreate):
 
 @app.post("/login", response_model=LoginResponse)
 async def login_user(user: UserBase):
+    import logging
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users WHERE username = %s", (user.username,))
         db_user = cursor.fetchone()
-        if not db_user or not check_password_hash(db_user["password_hash"], user.password):
+        if not db_user:
+            logging.warning(f"Login failed: user '{user.username}' not found")
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        pw_ok = check_password_hash(db_user["password_hash"], user.password)
+        logging.warning(f"Login attempt: user={user.username} hash_method={db_user['password_hash'].split(':')[0]} pw_ok={pw_ok}")
+        if not pw_ok:
             raise HTTPException(status_code=401, detail="Invalid username or password")
         return {
             "status": "success",
