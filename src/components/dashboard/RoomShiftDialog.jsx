@@ -73,7 +73,8 @@ export default function RoomShiftDialog({ open, onClose, roomNum, onSuccess }) {
         if (cancelled) return;
 
         if (res.status === 200) {
-          const id = res.data?.bookingId ?? res.data?.id ?? null;
+          // API returns booking object — id is at top level
+          const id = res.data?.id ?? res.data?.bookingId ?? null;
           if (id) {
             setBookingId(id);
           } else {
@@ -100,7 +101,11 @@ export default function RoomShiftDialog({ open, onClose, roomNum, onSuccess }) {
         if (cancelled) return;
 
         if (roomsRes.status === 200) {
-          const allRooms = Array.isArray(roomsRes.data) ? roomsRes.data : [];
+          // getAllRomms returns { floor_name: [rooms] } — flatten it
+          const data = roomsRes.data;
+          const allRooms = Array.isArray(data)
+            ? data
+            : Object.values(data).flat();
           const vacant = allRooms.filter(
             (r) => r.status === 'Vacant' && String(r.room_number) !== String(roomNum)
           );
