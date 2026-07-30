@@ -80,11 +80,14 @@ export const calculateTotalStatusCount = (data) => {
 };
 
 export const trimPath = (filePath) => {
+  if (!filePath) return filePath;
+  // Strip /uploads/ prefix if present (legacy paths stored with full server path)
   const startIndex = filePath.indexOf('/uploads/');
-  if (startIndex !== -1) {
-    return filePath.slice(startIndex + '/uploads/'.length);
-  }
-  return filePath;
+  const trimmed = startIndex !== -1
+    ? filePath.slice(startIndex + '/uploads/'.length)
+    : filePath;
+  // Remove any leading slash to prevent double-slash in URLs
+  return trimmed.replace(/^\/+/, '');
 }
 
 export const addEllipsisWithExtension = (filePath, maxLength = 25) => {

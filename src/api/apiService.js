@@ -119,10 +119,16 @@ export const fileApi = {
   },
 
   getUploadedFile: async (filePath) => {
-    const response = await axios.get(`${BASE_URL}/files?path=${filePath}`, {
+    // If it's already a full URL (e.g. Cloudinary), fetch it directly
+    if (filePath && (filePath.startsWith('http://') || filePath.startsWith('https://'))) {
+      const response = await axios.get(filePath, { responseType: "blob" });
+      return response;
+    }
+    // Legacy: filename only — proxy through our backend
+    const cleanPath = filePath ? filePath.replace(/^\/+/, '') : filePath;
+    const response = await axios.get(`${BASE_URL}/files?path=${cleanPath}`, {
       responseType: "blob"
     });
-
     return response;
   }
 }
