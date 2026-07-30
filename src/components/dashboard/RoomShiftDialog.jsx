@@ -101,13 +101,20 @@ export default function RoomShiftDialog({ open, onClose, roomNum, onSuccess }) {
         if (cancelled) return;
 
         if (roomsRes.status === 200) {
-          // getAllRomms returns { floor_name: [rooms] } — flatten it
+          // getAllRomms returns { floor_name: [rooms] } — flatten all floors
           const data = roomsRes.data;
-          const allRooms = Array.isArray(data)
-            ? data
-            : Object.values(data).flat();
+          let allRooms = [];
+          if (Array.isArray(data)) {
+            allRooms = data;
+          } else if (data && typeof data === 'object') {
+            // Flatten nested { floorName: [roomObjects] }
+            allRooms = Object.values(data).reduce((acc, floorRooms) => {
+              if (Array.isArray(floorRooms)) return acc.concat(floorRooms);
+              return acc;
+            }, []);
+          }
           const vacant = allRooms.filter(
-            (r) => r.status === 'Vacant' && String(r.room_number) !== String(roomNum)
+            (r) => r && r.status === 'Vacant' && String(r.room_number) !== String(roomNum)
           );
           setVacantRooms(vacant);
         } else {
