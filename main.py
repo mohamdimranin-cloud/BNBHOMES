@@ -507,9 +507,13 @@ async def get_rooms():
         return cached
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM floors")
+    cursor.execute("SELECT * FROM floors ORDER BY id")
     floors = [dict(r) for r in cursor.fetchall()]
-    cursor.execute("SELECT * FROM rooms")
+    cursor.execute("""
+        SELECT * FROM rooms
+        ORDER BY floor_id,
+                 CASE WHEN room_number ~ '^[0-9]+$' THEN LPAD(room_number, 10, '0') ELSE room_number END
+    """)
     rooms = [dict(r) for r in cursor.fetchall()]
     conn.close()
     result = {}
