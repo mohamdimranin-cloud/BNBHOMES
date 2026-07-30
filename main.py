@@ -10,6 +10,23 @@ import time
 from werkzeug.security import generate_password_hash, check_password_hash
 from decimal import Decimal
 
+# Cloudinary setup — uses env vars CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+# If not set, falls back to local disk storage (for local dev)
+_CLOUDINARY_ENABLED = bool(
+    os.environ.get("CLOUDINARY_CLOUD_NAME") and
+    os.environ.get("CLOUDINARY_API_KEY") and
+    os.environ.get("CLOUDINARY_API_SECRET")
+)
+if _CLOUDINARY_ENABLED:
+    import cloudinary
+    import cloudinary.uploader
+    cloudinary.config(
+        cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+        api_key=os.environ["CLOUDINARY_API_KEY"],
+        api_secret=os.environ["CLOUDINARY_API_SECRET"],
+        secure=True,
+    )
+
 # Simple in-memory cache
 _cache = {}
 _cache_ttl = {}
@@ -441,15 +458,32 @@ async def upload_file(file: UploadFile = File(...)):
     ext = file.filename.rsplit(".", 1)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"File type not allowed. Use: {', '.join(ALLOWED_EXTENSIONS)}")
-    filename = f"{uuid.uuid4()}_{file.filename}"
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    try:
-        contents = await file.read()
-        with open(file_path, "wb") as f:
-            f.write(contents)
-        return FileUploadResponse(status="success", message="File uploaded successfully", file_path=filename)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    contents = await file.read()
+
+    if _CLOUDINARY_ENABLED:
+        # Upload to Cloudinary — returns a permanent HTTPS URL
+        try:
+            import io
+            result = cloudinary.uploader.upload(
+                io.BytesIO(contents),
+                folder="bnbhomes",
+                resource_type="auto",
+            )
+            public_url = result["secure_url"]
+            return FileUploadResponse(status="success", message="File uploaded successfully", file_path=public_url)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Cloudinary upload failed: {e}")
+    else:
+        # Fallback: local disk (development only — not persistent on Render)
+        filename = f"{uuid.uuid4()}_{file.filename}"
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        try:
+            with open(file_path, "wb") as f:
+                f.write(contents)
+            return FileUploadResponse(status="success", message="File uploaded successfully", file_path=filename)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/files")
