@@ -486,9 +486,9 @@ async def get_rooms():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM floors")
-    floors = cursor.fetchall()
+    floors = [dict(r) for r in cursor.fetchall()]
     cursor.execute("SELECT * FROM rooms")
-    rooms = cursor.fetchall()
+    rooms = [dict(r) for r in cursor.fetchall()]
     conn.close()
     result = {}
     for floor in floors:
