@@ -3,7 +3,7 @@ import axios from "axios";
 // const BASE_URL = "https://web.bnbhomes.in/api";
 // const BASE_URL = "https://fast-bnbapi.onrender.com";
 // const BASE_URL = "https://neat-bevvy-vtpl-testing-b9d1ac69.koyeb.app";
-const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+const BASE_URL = (process.env.REACT_APP_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -109,26 +109,37 @@ export const roomBookingApi = {
 
 export const fileApi = {
   imageUpload: async (fileData) => {
-    const response = await axios.post(`${BASE_URL}/upload`, fileData, {
+    const response = await api.post("/upload", fileData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
     });
-
     return response;
   },
 
   getUploadedFile: async (filePath) => {
-    // If it's already a full URL (e.g. Cloudinary), fetch it directly
-    if (filePath && (filePath.startsWith('http://') || filePath.startsWith('https://'))) {
+    if (!filePath) return null;
+
+    // data: URL — convert to blob locally, no network call needed
+    if (filePath.startsWith('data:')) {
+      const [header, b64] = filePath.split(',');
+      const mime = header.split(':')[1].split(';')[0];
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: mime });
+      return { status: 200, data: blob };
+    }
+
+    // Full https:// URL (Cloudinary etc.) — fetch directly
+    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
       const response = await axios.get(filePath, { responseType: "blob" });
       return response;
     }
-    // Legacy: filename only — proxy through our backend
-    const cleanPath = filePath ? filePath.replace(/^\/+/, '') : filePath;
-    const response = await axios.get(`${BASE_URL}/files?path=${cleanPath}`, {
-      responseType: "blob"
-    });
+
+    // Legacy: bare filename — proxy through backend
+    const cleanPath = filePath.replace(/^\/+/, '');
+    const response = await axios.get(`${BASE_URL}/files?path=${cleanPath}`, { responseType: "blob" });
     return response;
   }
 }
