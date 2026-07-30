@@ -427,6 +427,28 @@ def _decimal_str(val):
 async def index():
     return {"message": "Welcome to BnbHome v2.0.0 - FastAPI + PostgreSQL"}
 
+@app.get("/debug-login")
+async def debug_login():
+    """Temporary debug endpoint — remove after fixing login."""
+    import werkzeug
+    from werkzeug.security import check_password_hash
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username, password_hash, role FROM users WHERE username = 'admin'")
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return {"error": "admin user not found"}
+    pw_ok = check_password_hash(row["password_hash"], "Admin@123")
+    return {
+        "username": row["username"],
+        "role": row["role"],
+        "hash_prefix": row["password_hash"][:40],
+        "hash_method": row["password_hash"].split(":")[0],
+        "pw_check": pw_ok,
+        "werkzeug_version": getattr(werkzeug, "__version__", "unknown"),
+    }
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
