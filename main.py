@@ -1006,7 +1006,7 @@ async def create_advance_booking(booking: AdvanceBookingCreate):
         )
         conn.commit()
         cursor.execute(
-            "INSERT INTO advance_bookings (guest_name, guest_mobile, guest_whatsapp, guest_email, guest_type, corporate_name, check_in_date, check_out_date, number_of_nights, room_type, number_of_rooms, rate_per_room, total_amount, discount_amt, final_amount, advance_amount, paid_via, paid_reference, balance_amount, remarks, booking_ref, previous_ref) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id" RETURNING id,
+            "INSERT INTO advance_bookings (guest_name, guest_mobile, guest_whatsapp, guest_email, guest_type, corporate_name, check_in_date, check_out_date, number_of_nights, room_type, number_of_rooms, rate_per_room, total_amount, discount_amt, final_amount, advance_amount, paid_via, paid_reference, balance_amount, remarks, booking_ref, previous_ref) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (booking.guestName, booking.guestMobile, booking.guestWhatsapp, booking.guestEmail,
              booking.guestType, booking.corporateName, booking.checkInDate, booking.checkOutDate,
              booking.numberOfNights, booking.roomType, booking.numberOfRooms, booking.ratePerRoom,
