@@ -3,7 +3,7 @@ import axios from "axios";
 // const BASE_URL = "https://web.bnbhomes.in/api";
 // const BASE_URL = "https://fast-bnbapi.onrender.com";
 // const BASE_URL = "https://neat-bevvy-vtpl-testing-b9d1ac69.koyeb.app";
-const BASE_URL = "http://localhost:8000";
+const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 const api = axios.create({
   baseURL: BASE_URL,
