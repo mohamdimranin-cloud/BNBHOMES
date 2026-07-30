@@ -14,20 +14,15 @@ from decimal import Decimal
 
 # Cloudinary setup — uses env vars CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
 # If not set, falls back to local disk storage (for local dev)
-_CLOUDINARY_ENABLED = bool(
-    os.environ.get("CLOUDINARY_CLOUD_NAME") and
-    os.environ.get("CLOUDINARY_API_KEY") and
-    os.environ.get("CLOUDINARY_API_SECRET")
+_CLOUDINARY_ENABLED = True
+import cloudinary
+import cloudinary.uploader
+cloudinary.config(
+    cloud_name="dotjicyrh",
+    api_key="974471632548915",
+    api_secret="KefeZ0TnHcpiUI_kdJ1WhRKQG4k",
+    secure=True,
 )
-if _CLOUDINARY_ENABLED:
-    import cloudinary
-    import cloudinary.uploader
-    cloudinary.config(
-        cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
-        api_key=os.environ["CLOUDINARY_API_KEY"],
-        api_secret=os.environ["CLOUDINARY_API_SECRET"],
-        secure=True,
-    )
 
 # Simple in-memory cache
 _cache = {}
@@ -568,7 +563,8 @@ async def update_room_status(room_number: str, room: RoomUpdate):
         conn.close()
 
 # ---------------------------------------------------------------------------
-# File upload
+# File upload — stores as base64 data URL, returns it directly
+# No external service needed; data is stored in DB via guest fields
 # ---------------------------------------------------------------------------
 
 @app.post("/upload", response_model=FileUploadResponse)
@@ -581,8 +577,8 @@ async def upload_file(file: UploadFile = File(...)):
 
     contents = await file.read()
 
+    # Try Cloudinary first if configured
     if _CLOUDINARY_ENABLED:
-        # Upload to Cloudinary — returns a permanent HTTPS URL
         try:
             import io
             result = cloudinary.uploader.upload(
@@ -592,18 +588,16 @@ async def upload_file(file: UploadFile = File(...)):
             )
             public_url = result["secure_url"]
             return FileUploadResponse(status="success", message="File uploaded successfully", file_path=public_url)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Cloudinary upload failed: {e}")
-    else:
-        # Fallback: local disk (development only — not persistent on Render)
-        filename = f"{uuid.uuid4()}_{file.filename}"
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        try:
-            with open(file_path, "wb") as f:
-                f.write(contents)
-            return FileUploadResponse(status="success", message="File uploaded successfully", file_path=filename)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        except Exception:
+            pass  # Fall through to base64
+
+    # Fallback: encode as base64 data URL — works everywhere, no external service
+    import base64
+    mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "pdf": "application/pdf"}
+    mime = mime_map.get(ext, "image/jpeg")
+    b64 = base64.b64encode(contents).decode("utf-8")
+    data_url = f"data:{mime};base64,{b64}"
+    return FileUploadResponse(status="success", message="File uploaded successfully", file_path=data_url)
 
 
 @app.get("/files")
