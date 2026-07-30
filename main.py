@@ -425,7 +425,7 @@ def _decimal_str(val):
 
 @app.get("/")
 async def index():
-    return {"message": "Welcome to BnbHome v1.0.0 - FastAPI"}
+    return {"message": "Welcome to BnbHome v2.0.0 - FastAPI + PostgreSQL"}
 
 # ---------------------------------------------------------------------------
 # Auth
