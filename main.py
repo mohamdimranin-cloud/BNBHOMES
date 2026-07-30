@@ -398,6 +398,7 @@ async def update_rooms_bulk(rooms: Dict[str, List[RoomUpdate]]):
                     (room.room_type, room.status, room.selected, room.room_number, floor_id),
                 )
         conn.commit()
+        cache_clear("rooms")
         return {"status": "success"}
     finally:
         conn.close()
@@ -596,6 +597,7 @@ async def create_booking(booking: BookingCreate):
         for room_num in booking.selectedRooms:
             cursor.execute("UPDATE rooms SET status = 'Just Occupied' WHERE room_number = %s", (room_num,))
         conn.commit()
+        cache_clear("rooms")
         return {"status": "success", "booking_id": booking_id}
     except Exception as e:
         conn.rollback()
@@ -628,6 +630,7 @@ async def update_to_stayback(room_number: str):
         if booking_row["check_out_date"] > date.today():
             cursor.execute("UPDATE rooms SET status = 'Stay Back' WHERE room_number = %s", (room_number,))
             conn.commit()
+            cache_clear("rooms")
             return {"status": "success", "message": "Status updated to Stay Back"}
         return {"status": "skipped", "message": "Checkout date not in future"}
     finally:
@@ -654,6 +657,7 @@ async def update_to_overstay(room_number: str):
         if booking_row and booking_row["check_out_date"] <= date.today():
             cursor.execute("UPDATE rooms SET status = 'Over Stay' WHERE room_number = %s", (room_number,))
             conn.commit()
+            cache_clear("rooms")
             return {"status": "success", "message": "Status updated to Over Stay"}
         return {"status": "skipped", "message": "Checkout date still in future"}
     finally:
@@ -1194,6 +1198,7 @@ async def room_shift(bookingId: int, body: RoomShiftCreate):
         )
 
         conn.commit()
+        cache_clear("rooms")
         return {
             "bookingId": bookingId,
             "oldRoom": old_room,
