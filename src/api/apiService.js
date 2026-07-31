@@ -5,8 +5,11 @@ import axios from "axios";
 // const BASE_URL = "https://neat-bevvy-vtpl-testing-b9d1ac69.koyeb.app";
 const BASE_URL = (process.env.REACT_APP_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
+// Helper that guarantees no double-slash when joining base + path
+const apiUrl = (path) => `${BASE_URL}/${path.replace(/^\/+/, "")}`;
+
 const api = axios.create({
-  baseURL: BASE_URL,
+  baseURL: BASE_URL.replace(/\/+$/, ""),
   headers: {
     'Content-Type': 'application/json',
   }
@@ -109,7 +112,7 @@ export const roomBookingApi = {
 
 export const fileApi = {
   imageUpload: async (fileData) => {
-    const response = await api.post("/upload", fileData, {
+    const response = await axios.post(apiUrl("/upload"), fileData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -139,7 +142,7 @@ export const fileApi = {
 
     // Legacy: bare filename — proxy through backend
     const cleanPath = filePath.replace(/^\/+/, '');
-    const response = await axios.get(`${BASE_URL}/files?path=${cleanPath}`, { responseType: "blob" });
+    const response = await axios.get(apiUrl(`/files?path=${cleanPath}`), { responseType: "blob" });
     return response;
   }
 }
