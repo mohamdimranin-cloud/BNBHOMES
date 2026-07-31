@@ -81,6 +81,10 @@ export const calculateTotalStatusCount = (data) => {
 
 export const trimPath = (filePath) => {
   if (!filePath) return filePath;
+  // data: URLs and https:// URLs are complete — return as-is
+  if (filePath.startsWith('data:') || filePath.startsWith('http://') || filePath.startsWith('https://')) {
+    return filePath;
+  }
   // Strip /uploads/ prefix if present (legacy paths stored with full server path)
   const startIndex = filePath.indexOf('/uploads/');
   const trimmed = startIndex !== -1

@@ -1,40 +1,24 @@
 import axios from "axios";
 
-// const BASE_URL = "https://web.bnbhomes.in/api";
-// const BASE_URL = "https://fast-bnbapi.onrender.com";
-// const BASE_URL = "https://neat-bevvy-vtpl-testing-b9d1ac69.koyeb.app";
-const BASE_URL = (process.env.REACT_APP_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+// Single source of truth — no trailing slash, no env var ambiguity
+const API_BASE = "https://bnbhomes-api.onrender.com";
 
-// Helper that guarantees no double-slash when joining base + path
-const apiUrl = (path) => `${BASE_URL}/${path.replace(/^\/+/, "")}`;
+// Safely join base + path, always exactly one slash between them
+const url = (path) => `${API_BASE}/${String(path).replace(/^\/+/, "")}`;
 
 const api = axios.create({
-  baseURL: BASE_URL.replace(/\/+$/, ""),
-  headers: {
-    'Content-Type': 'application/json',
-  }
+  baseURL: API_BASE,
+  headers: { "Content-Type": "application/json" },
 });
 
-// const fileApiAxios = axios.create({
-//   baseURL: "https://web.bnbhomes.in"
-// });
-
-// Add response interceptor for error handling
+// Return error responses instead of throwing, so callers can check status
 api.interceptors.response.use(
-  response => response,
-  error => {
-    // For 409 and other known errors, return the error response so callers can check status
-    if (error.response) {
-      return error.response;
-    }
+  (response) => response,
+  (error) => {
+    if (error.response) return error.response;
     return Promise.reject(error);
   }
 );
-
-// fileApiAxios.interceptors.response.use(
-//   response => response,
-//   error => error
-// );
 
 export const authApi = {
   login: async (credentials) => {
@@ -112,10 +96,9 @@ export const roomBookingApi = {
 
 export const fileApi = {
   imageUpload: async (fileData) => {
-    const response = await axios.post(apiUrl("/upload"), fileData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+    console.log("[fileApi] uploading to:", url("upload"));
+    const response = await axios.post(url("upload"), fileData, {
+      headers: { "Content-Type": "multipart/form-data" },
     });
     return response;
   },
@@ -123,10 +106,10 @@ export const fileApi = {
   getUploadedFile: async (filePath) => {
     if (!filePath) return null;
 
-    // data: URL — convert to blob locally, no network call needed
-    if (filePath.startsWith('data:')) {
-      const [header, b64] = filePath.split(',');
-      const mime = header.split(':')[1].split(';')[0];
+    // data: URL — convert to blob locally, no network call
+    if (filePath.startsWith("data:")) {
+      const [header, b64] = filePath.split(",");
+      const mime = header.split(":")[1].split(";")[0];
       const binary = atob(b64);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -134,18 +117,16 @@ export const fileApi = {
       return { status: 200, data: blob };
     }
 
-    // Full https:// URL (Cloudinary etc.) — fetch directly
-    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
-      const response = await axios.get(filePath, { responseType: "blob" });
-      return response;
+    // Full https:// URL (Cloudinary etc.)
+    if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
+      return await axios.get(filePath, { responseType: "blob" });
     }
 
-    // Legacy: bare filename — proxy through backend
-    const cleanPath = filePath.replace(/^\/+/, '');
-    const response = await axios.get(apiUrl(`/files?path=${cleanPath}`), { responseType: "blob" });
-    return response;
-  }
-}
+    // Legacy bare filename — proxy through backend
+    const clean = filePath.replace(/^\/+/, "");
+    return await axios.get(url(`files?path=${clean}`), { responseType: "blob" });
+  },
+};
 
 export const addtionalApi = {
   getGuestDataByBookingId: async (bookingId) => {
