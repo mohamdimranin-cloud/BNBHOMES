@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, Request, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
@@ -226,6 +226,7 @@ app.add_middleware(
         "https://bnbhomes.in",
         "https://www.bnbhomes.in",
         "https://bnbhomes-website.netlify.app",
+        "https://bnbhomes1.netlify.app",
         "http://localhost:3000",
         "http://localhost:5173",
     ],
@@ -1040,8 +1041,19 @@ async def public_advance_booking_options():
     })
 
 @app.post("/public/advanceBooking")
-async def public_create_advance_booking(booking: AdvanceBookingCreate):
-    """Same as /advanceBooking but with open CORS — for bnbhomes.in website."""
+async def public_create_advance_booking(request: Request):
+    """Open CORS endpoint for bnbhomes.in website. Accepts body as text/plain JSON."""
+    import json as _json
+    try:
+        body = await request.body()
+        booking_data = _json.loads(body)
+        booking = AdvanceBookingCreate(**booking_data)
+    except Exception as e:
+        return _JSONResponse(
+            content={"status": "error", "detail": f"Invalid request: {e}"},
+            status_code=400,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
